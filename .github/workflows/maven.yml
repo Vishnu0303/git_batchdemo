@@ -5,52 +5,62 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read  # Read-only permissions for accessing the repository
+  id-token: write  # Required for security when accessing secrets or connecting to external services
+
 jobs:
   build:
-    runs-on: ubuntu-latest
-    
+    runs-on: ubuntu-22.04  # Explicitly specify the Ubuntu version
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        
+
       - name: Set up JDK 11
-        uses: actions/setup-java@v1
+        uses: actions/setup-java@v3  # Updated to latest version
         with:
+          distribution: 'temurin'
           java-version: 11
 
       - name: Build with Maven
         run: mvn clean package
 
-      - name: Upload  WAR file
-        uses: actions/upload-artifact@v3
+      - name: Upload WAR file
+        uses: actions/upload-artifact@v4  # Updated to v4
         with:
           name: java-app
           path: target/*.war
 
   deploy:
     needs: build
-    runs-on: ubuntu-latest
-    
+    runs-on: ubuntu-22.04  # Explicitly specify the Ubuntu version
+
     steps:
       - name: Download WAR file
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4  # Updated to v4
         with:
           name: java-app
           path: target
-          
-      - name: Deploy WAR via SCP
+
+      - name: Set up SSH
         env:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-          HOSTNAME: ${{ secrets.SSH_HOST }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
         run: |
           mkdir -p ~/.ssh
-          echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -H $HOSTNAME >> ~/.ssh/known_hosts
+          # Check if the SSH_HOST secret is set properly
+          echo "SSH_HOST: ${{ secrets.SSH_HOST }}"
+          # Scan and add the host to known_hosts
+          ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
+          cat ~/.ssh/known_hosts  # Debug: Verify the known_hosts file contents
+
+      - name: Deploy WAR via SCP
+        run: |
           scp -i ~/.ssh/id_rsa target/*.war ubuntu@${{ secrets.SSH_HOST }}:/home/ubuntu/
+
       - name: Copy WAR file to Tomcat webapps
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-          HOSTNAME: ${{ secrets.SSH_HOST }}
         run: |
           ssh -i ~/.ssh/id_rsa ubuntu@${{ secrets.SSH_HOST }} 'sudo cp /home/ubuntu/*.war /var/lib/tomcat9/webapps/'
