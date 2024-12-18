@@ -1,4 +1,4 @@
-name: Deploy to EC2
+name: Deploy Java Application to EC2
 
 on:
   push:
@@ -6,24 +6,56 @@ on:
       - main
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
-
+    
     steps:
       - name: Checkout code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
+      
+      - name: Set up JDK 11
+        uses: actions/setup-java@v1
+        with:
+          java-version: 11
 
-      - name: Set up SSH key
+      - name: Build with Maven
+        run: mvn clean package
+
+      - name: Upload WAR file
+        uses: actions/upload-artifact@v3
+        with:
+          name: java-app
+          path: target/*.war
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Download WAR file
+        uses: actions/download-artifact@v3
+        with:
+          name: java-app
+          path: target
+      
+      - name: Debug SSH_HOST value
+        run: echo "SSH_HOST is: ${{ secrets.SSH_HOST }}"
+      
+      - name: Deploy WAR via SCP
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          HOSTNAME: ${{ secrets.SSH_HOST }}
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 700 ~/.ssh
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -t rsa $HOSTNAME >> ~/.ssh/known_hosts
+          scp -i ~/.ssh/id_rsa target/*.war ubuntu@${{ secrets.SSH_HOST }}:/home/ubuntu/
 
-      - name: Add EC2 to known hosts
+      - name: Copy WAR file to Tomcat webapps
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          HOSTNAME: ${{ secrets.SSH_HOST }}
         run: |
-          mkdir -p ~/.ssh
-          ssh-keyscan -H 3.83.153.129 >> ~/.ssh/known_hosts
-
-      - name: Deploy to EC2
-        run: |
-          ssh -i ~/.ssh/id_rsa ubuntu@3.83.153.129 "your-deployment-command-here"
+          ssh -i ~/.ssh/id_rsa ubuntu@${{ secrets.SSH_HOST }} 'sudo cp /home/ubuntu/*.war /var/lib/tomcat9/webapps/'
